@@ -20,10 +20,11 @@
 package DIMEX
 
 import (
-	PP2PLink "SD/PP2PLink"
+	PP2PLink "distributed-systems/PP2PLink"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ------------------------------------------------------------------------------------
@@ -31,10 +32,6 @@ import (
 // ------------------------------------------------------------------------------------
 
 type State int // enumeracao dos estados possiveis de um processo
-const (
-	respOk = "respOk"
-	reqEntry = "reqEntry"
-)
 
 const (
 	noMX State = iota
@@ -161,7 +158,7 @@ func (module *DIMEX_Module) handleUponReqEntry() {
 			module.sendToLink(module.addresses[i], "reqEntry", "   ")
 		}
 		p1 = module.addresses[i]
-		message := "reqEntry," + module.stringify(reqEntry, module.id, module.reqTs) // reqEntry, r, ts
+		message := module.stringify("reqEntry", module.id, module.lcl)
 		leadingSpc = strings.Repeat("  ", len(p1) - len(module.addresses[module.id]) + 1)
 		module.sendToLink(p1, message, leadingSpc)
 
@@ -181,7 +178,7 @@ func (module *DIMEX_Module) handleUponReqExit() {
 	for i := 0; i < len(module.waiting); i++ {
 		if module.waiting[i] {
 			p1 := module.addresses[i]
-			message := module.stringify(respOk, module.id, module.lcl)
+			message := module.stringify("respOk", module.id, module.lcl)
 			leadingSpc := strings.Repeat(" ", 22-len(message))
 			module.sendToLink(p1, message, leadingSpc)
 			module.waiting[i] = false
@@ -228,26 +225,64 @@ func (module *DIMEX_Module) handleUponDeliverReqEntry(msgOutro PP2PLink.PP2PLink
 		        				então  postergados := postergados + [p, r ]
 		     					lts.ts := max(lts.ts, rts.ts)
 	
-	*/
+	
 	fmt.Println("====== handleUponDeliverReqEntry =======", module.id)
-	_, otherId, otherTs := module.parseMsg(msgOutro.Message)
+	 _, otherId, otherTs := module.parseMsg(msgOutro.Message)
 	if module.st == noMX || (module.st == wantMX && before(otherId, otherTs, module.id, module.reqTs)) {
 		p1 := module.addresses[otherId]
-		message := module.stringify(respOk, module.id, module.lcl)
+		message := module.stringify("respOk", module.id, module.lcl)
 		leadingSpc := strings.Repeat(" ", 22-len(message))
 		module.sendToLink(p1, message, leadingSpc)
 	} else if module.st == inMX || (module.st == wantMX && before(module.id, module.reqTs, otherId, otherTs)) {
 		module.waiting[otherId] = true
-		module.lcl = max(module.lcl, otherTs) // maybe not necessary
-
 	} else {
 		fmt.Println("Erro: estado invalido")
 	}
 	if otherTs > module.lcl {
 		module.lcl = otherTs
 	}
-	
+	*/
+	fmt.Println("====== handleUponDeliverReqEntry =======", module.id)
+	module.lcl++
+	myTs := module.lcl
+	resps := 0
+
+	for _, p := range module.addresses { //itera sobre todos os processos e envia reqEntry para todos
+		pID, _ := strconv.Atoi(p)
+		if pID != module.id {
+			go func(peerID int, myTs int) { // go routine para enviar a mensagem
+				message := fmt.Sprintf("[pl, Send | %d, [reqEntry, %d, %d]]", module.id, module.id, myTs)
+				module.sendToLink(p, message, "")
+			}(pID, myTs)
+		}
+	}
+
+	module.st = wantMX
+	module.reqTs = myTs
+
+	fmt.Printf("[DEBUG] Process %d: Sent requests for timestamp %d\n", module.id, myTs)
+
+	for resps < module.nbrResps {
+		msgOutro := <-module.Pp2plink.Ind
+		if strings.Contains(msgOutro.Message, "respOk") {
+			module.outDbg("         <<<---- responde! " + msgOutro.Message)
+			module.handleUponDeliverRespOk(msgOutro) // ENTRADA DO ALGORITMO
+			resps++
+		}
+	}
+
+	fmt.Printf("[DEBUG] Process %d: Received all %d responses\n", module.id, module.nbrResps)
+
+	// Adicionamos um pequeno atraso para simular o tempo de escrita no arquivo
+	time.Sleep(500 * time.Millisecond)
+
+	// Use o canal para indicar que terminou a região crítica
+	module.Ind <- dmxResp{}
+	module.st = inMX
 }
+
+	
+
 
 // ------------------------------------------------------------------------------------
 // ------- funcoes de ajuda

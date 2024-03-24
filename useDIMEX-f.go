@@ -29,7 +29,7 @@
 package main
 
 import (
-	"SD/DIMEX"
+	"distributed-systems/DIMEX"
 	"fmt"
 	"os"
 	"strconv"
