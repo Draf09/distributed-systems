@@ -65,6 +65,13 @@ type DIMEX_Module struct {
 	Pp2plink *PP2PLink.PP2PLink // acesso aa comunicacao enviar por PP2PLinq.Req  e receber por PP2PLinq.Ind
 }
 
+// snapshot message
+type snapshot struct {
+	SenderID int
+	ReceiverID int
+}
+
+
 // ------------------------------------------------------------------------------------
 // ------- inicializacao
 // ------------------------------------------------------------------------------------
@@ -341,6 +348,7 @@ func (module *DIMEX_Module) outDbg(s string) {
 	}
 }
 
+//////////////////////// snapshot Chandy-Lamport //////////////////////////
 /*
 implementacao do algoritmo de snapshot Chandy-Lamport
 https://en.wikipedia.org/wiki/Chandy%E2%80%93Lamport_algorithm
@@ -416,4 +424,24 @@ processo3:
 
 manda snapshot em cada canal de saida
 */
+
+
+func (module *DIMEX_Module) InitiateSnapshot(snapshotID int) {
+    snapshot := SnapshotMessage{SenderID: module.id, SnapshotID: snapshotID}
+    for _, address := range module.addresses {
+        if address != module.Pp2plink.Address {
+            module.sendToLink(address, "snapshot", snapshot)
+        }
+    }
+}
+
+func (module *DIMEX_Module) handleUponSnapshot(snapshot SnapshotMessage) {
+	// record local state
+	fmt.Println("Process ", module.id, " received snapshot message from process ", snapshot.SnapshotID)
+	for _, address := range module.addresses {
+		if address != module.Pp2plink.Address {
+			module.sendToLink(address, "snapshot", snapshot)
+		}
+	}
+}
 
