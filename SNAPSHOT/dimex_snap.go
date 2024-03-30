@@ -16,11 +16,10 @@
 				handleUponDeliverRespOk(msgOutro)   // recebe do nivel de baixo
 				handleUponDeliverReqEntry(msgOutro) // recebe do nivel de baixo
 */
-
 package DIMEX
 
 import (
-	PP2PLink "distributed-systems/PP2PLink"
+	PP2PLink "distributed-systems/SNAPSHOT/PP2PLink"
 	"fmt"
 	"strconv"
 	"strings"
@@ -29,6 +28,11 @@ import (
 // ------------------------------------------------------------------------------------
 // ------- principais tipos
 // ------------------------------------------------------------------------------------
+
+type MarkerMessage struct {
+    SenderID int
+    SnapshotID int
+}
 
 type State int // enumeracao dos estados possiveis de um processo
 
@@ -390,30 +394,25 @@ func (module *DIMEX_Module) ChandyLamport() {
 
 }
 
-/*
-precisa de uma estrutura para os processs para representar o estado local
-quem esta em waiting
+func (module *DIMEX_Module) InitiateSnapshot(snapshotID int) {
+    marker := MarkerMessage{SenderID: module.id, SnapshotID: snapshotID}
+    for _, address := range module.addresses {
+        if address != module.Pp2plink.Address {
+            module.sendToLink(address, "marker", marker)
+        }
+    }
+}
 
-ex 3 processos 
+func (module *DIMEX_Module) handleMarkerMessage(marker MarkerMessage) {
+    // Record local state
+    // This could be a simple log or a more complex data structure depending on your needs
+    fmt.Printf("Process %d recorded state for snapshot %d\n", module.id, marker.SnapshotID)
 
-processo 1:
-	Canal IN:
-		p2, p3
-	Canal OUT:
-		p3, p1
-
-processo 2:
-	Canal IN:
-		p3,p2
-	Canal OUT:
-		p1,p2
-
-processo3:
-	Canal IN:
-		p1,p2
-	Canal OUT:
-		p3, p
-
-manda snapshot em cada canal de saida
-*/
+    // Send marker to all other processes
+    for _, address := range module.addresses {
+        if address != module.Pp2plink.Address {
+            module.sendToLink(address, "marker", marker)
+        }
+    }
+}
 
