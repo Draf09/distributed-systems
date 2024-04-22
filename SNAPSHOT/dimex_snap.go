@@ -65,6 +65,7 @@ type DIMEX_Module struct {
 	reqTs     int          // timestamp local da ultima requisicao deste processo
 	nbrResps  int		// numero de respostas recebidas
 	dbg       bool
+	Snapshot map[int]string // map of snapshots
 
 	Pp2plink *PP2PLink.PP2PLink // acesso aa comunicacao enviar por PP2PLinq.Req  e receber por PP2PLinq.Ind
 }
@@ -120,6 +121,15 @@ func (module *DIMEX_Module) Start() {
 
 			case msgOutro := <-module.Pp2plink.Ind: // vindo de outro processo
 				//fmt.Printf("dimex recebe da rede: ", msgOutro)
+
+				if strings.Contains(msgOutro.Message, "marker") {
+					module.Snapshot[module.id] = module.RecordState()
+					for _, address := range module.addresses {
+						if address != module.Pp2plink.Address {
+							module.sendToLink(address, "marker", "")
+						}
+					}
+				}
 				if strings.Contains(msgOutro.Message, "respOK") {
 					module.outDbg("         <<<---- responde! " + msgOutro.Message)
 					module.handleUponDeliverRespOk(msgOutro) // ENTRADA DO ALGORITMO
@@ -168,7 +178,7 @@ func (module *DIMEX_Module) handleUponReqEntry() {
 	}
 	module.st = wantMX // st = state
 }
-
+ 
 func (module *DIMEX_Module) handleUponReqExit() {
 	/*
 						upon event [ dmx, Exit  |  r  ]  do
@@ -349,6 +359,8 @@ func (module *DIMEX_Module) outDbg(s string) {
 implementacao do algoritmo de snapshot Chandy-Lamport
 https://en.wikipedia.org/wiki/Chandy%E2%80%93Lamport_algorithm
 https://www.geeksforgeeks.org/chandy-lamport-algorithm-for-distributed-snapshot/
+Others useful links:
+https://decomposition.al/blog/2019/04/26/an-example-run-of-the-chandy-lamport-snapshot-algorithm/
 
 1. processo p0 manda uma mensagem para si mesmo com "take snapshot"
 2. seja p1 o processo do qual p1 recebe a mensagem "take snapshot" pela primeira vez
@@ -394,14 +406,25 @@ func (module *DIMEX_Module) ChandyLamport() {
 
 }
 
-func (module *DIMEX_Module) InitiateSnapshot(snapshotID int) {
-    marker := MarkerMessage{SenderID: module.id, SnapshotID: snapshotID}
-    for _, address := range module.addresses {
-        if address != module.Pp2plink.Address {
-            module.sendToLink(address, "marker", marker)
-        }
-    }
+func (module *DIMEX_Module) InitiateSnapshot() {
+	module.Snapshot[module.id] = module.RecordState() // Record local state of current process
+	for _, address := range module.addresses {
+		if address != module.Pp2plink.Address {
+			module.sendToLink(address, "marker", "") // Send marker to all other processes
+		}
+	}
 }
+
+func (module *DIMEX_Module) RecordState() string {
+	// convert state to string
+	stateStr := strconv.Itoa(int(module.st))
+	lclStr := strconv.Itoa(module.lcl)
+
+	// combine state and lgical clock
+	recordedState := "State: " + stateStr + "Logical Clock: " + lclStr
+	return recordedState
+}
+
 
 func (module *DIMEX_Module) handleMarkerMessage(marker MarkerMessage) {
     // Record local state

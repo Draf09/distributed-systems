@@ -33,12 +33,13 @@ type PP2PLink_Ind_Message struct {
 	Message string
 }
 
-type PP2PLink struct {
-	Ind   chan PP2PLink_Ind_Message
-	Req   chan PP2PLink_Req_Message
+type PP2PLink struct { // estrutura do modulo
+	Ind   chan PP2PLink_Ind_Message // canal de mensagens recebidas
+	Req   chan PP2PLink_Req_Message // canal de mensagens a enviar
 	Run   bool
 	dbg   bool
 	Cache map[string]net.Conn // cache de conexoes - reaproveita conexao com destino ao inves de abrir outra
+	Address string // endereco do modulo
 }
 
 func NewPP2PLink(_address string, _dbg bool) *PP2PLink {
