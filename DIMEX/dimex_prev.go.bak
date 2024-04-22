@@ -16,23 +16,19 @@
 				handleUponDeliverRespOk(msgOutro)   // recebe do nivel de baixo
 				handleUponDeliverReqEntry(msgOutro) // recebe do nivel de baixo
 */
-package SNAPSHOT
+
+package DIMEX
 
 import (
-  PP2PLink "distributed-systems/PP2PLink"
-  "fmt"
-  "strconv"
-  "strings"
+	PP2PLink "distributed-systems/PP2PLink"
+	"fmt"
+	"strconv"
+	"strings"
 )
 
 // ------------------------------------------------------------------------------------
 // ------- principais tipos
 // ------------------------------------------------------------------------------------
-
-type MarkerMessage struct {
-    SenderID int
-    SnapshotID int
-}
 
 type State int // enumeracao dos estados possiveis de um processo
 
@@ -65,10 +61,19 @@ type DIMEX_Module struct {
 	reqTs     int          // timestamp local da ultima requisicao deste processo
 	nbrResps  int		// numero de respostas recebidas
 	dbg       bool
-	Snapshot map[int]string // map of snapshots
-
+	localState State	// estado local do processo
+	incomingState State	// estado recebido de outro processo
 	Pp2plink *PP2PLink.PP2PLink // acesso aa comunicacao enviar por PP2PLinq.Req  e receber por PP2PLinq.Ind
+	snapShotInProgress bool	// flag para indicar se o snapshot esta em progresso
+	stateRecorded bool	// flag para indicar se o estado foi gravado
 }
+
+// snapshot message
+type SnapshotMessage struct {
+	SenderID int
+	SnapshotID int
+}
+
 
 // ------------------------------------------------------------------------------------
 // ------- inicializacao
@@ -121,15 +126,6 @@ func (module *DIMEX_Module) Start() {
 
 			case msgOutro := <-module.Pp2plink.Ind: // vindo de outro processo
 				//fmt.Printf("dimex recebe da rede: ", msgOutro)
-
-				if strings.Contains(msgOutro.Message, "marker") {
-					module.Snapshot[module.id] = module.RecordState()
-					for _, address := range module.addresses {
-						if address != module.Pp2plink.Address {
-							module.sendToLink(address, "marker", "")
-						}
-					}
-				}
 				if strings.Contains(msgOutro.Message, "respOK") {
 					module.outDbg("         <<<---- responde! " + msgOutro.Message)
 					module.handleUponDeliverRespOk(msgOutro) // ENTRADA DO ALGORITMO
@@ -178,7 +174,7 @@ func (module *DIMEX_Module) handleUponReqEntry() {
 	}
 	module.st = wantMX // st = state
 }
- 
+
 func (module *DIMEX_Module) handleUponReqExit() {
 	/*
 						upon event [ dmx, Exit  |  r  ]  do
@@ -243,53 +239,82 @@ func (module *DIMEX_Module) handleUponDeliverReqEntry(msgOutro PP2PLink.PP2PLink
 	myTs := module.lcl
 	resps := 0
 
-	for _, p := range module.addresses { //itera sobre todos os processos e envia reqEntry para todos
-		pID, _ := strconv.Atoi(p)
+	// check if is a snapshot message request
+	if strings.Contains(msgOutro.Message, "snapshotRequest") {
+		snapshot, err := module.parseSnapshotMessage(msgOutro.Message)
+		if err != nil {
+			fmt.Println("Error parsing snapshot message:", err)
+			return
+		}
+		// Handle snapshot request
+		module.handleSnapshotRequest(snapshot)
+		return
+	}
+
+	// handle regular request entry 
+	for _, p := range module.addresses {
+		pID, _ := strconv.Atoi(p) 
 		if pID != module.id {
-			go func(peerID int, myTs int) { // go routine para enviar a mensagem
-				message := fmt.Sprintf("[pl, Send | %d, [reqEntry, %d, %d]]", module.id, module.id, myTs)
-				module.sendToLink(p, message, "") // envia a mensagem para o processo
-			}(pID, myTs) // envia a mensagem para o processo
+			go func(peerID int, myTs int) {
+				message := fmt.Sprintf("[pl | Send | %d, [reqEntry, %d, %d]]", module.id, module.id, myTs)
+				module.sendToLink(p, message, "   ")
+			}(pID, myTs)
 		}
 	}
+	module.st = wantMX
+	module.reqTs = myTs
 
-	module.st = wantMX 
-	module.reqTs = myTs // atribui o valor do relogio local ao timestamp da requisicao
-
-	fmt.Printf("[DEBUG] Process %d: Sent requests for timestamp %d\n", module.id, myTs)
-
-	for resps < module.nbrResps { // enquanto o numero de respostas for menor que o numero de respostas esperadas
-		msgOutro := <-module.Pp2plink.Ind // recebe a mensagem do outro processo
-		if strings.Contains(msgOutro.Message, "respOk") { // se a mensagem contiver "respOk"
+	fmt.Println("[DEBUG] Process %d: Sent request for timestamp %d\n", module.id, myTs)
+	
+	for resps < module.nbrResps {
+		msgOutro := <-module.Pp2plink.Ind
+		if strings.Contains(msgOutro.Message, "respOk") {
 			module.outDbg("         <<<---- responde! " + msgOutro.Message)
-			module.handleUponDeliverRespOk(msgOutro) // ENTRADA DO ALGORITMO - responde
-			resps++ // incrementa o numero de respostas
+			module.handleUponDeliverRespOk(msgOutro) // ENTRADA DO ALGORITMO
+			resps++
 		}
 	}
 
-	fmt.Printf("[DEBUG] Process %d: Received all %d responses\n", module.id, module.nbrResps)
-
-	// Um atraso foi criado para simular o tempo de escrita no arquivo
-	// time.Sleep(500 * time.Millisecond) 
-
-	// Usa o canal para indicar que terminou a região crítica
+	fmt.Println("[DEBUG] Process %d: Received all responses\n", module.id, module.nbrResps)
+	
 	module.Ind <- dmxResp{}
 	module.st = inMX
 }
 
-	
+		
+func (module *DIMEX_Module) handleSnapshotRequest(snapshot SnapshotMessage) {
+	module.recordState()
 
+	for _, address := range module.addresses {
+		if address != module.Pp2plink.Address {
+			module.sendToLink(address, "snapshotState", module.SerializeSnapshotMessage(SnapshotMessage{SenderID: snapshot.SenderID, SnapshotID: snapshot.SnapshotID}))
+		}
+	}
+}
 
 // ------------------------------------------------------------------------------------
 // ------- funcoes de ajuda
 // ------------------------------------------------------------------------------------
 
 func (module *DIMEX_Module) sendToLink(address string, content string, space string) {
-	module.outDbg(space + " ---->>>>   to: " + address + "     msg: " + content)
-	module.Pp2plink.Req <- PP2PLink.PP2PLink_Req_Message{
-		To:      address,
-		Message: content}
+	if module.snapShotInProgress {
+		// append the snapshot token to the message content , the Id 
+		contentWithToken := fmt.Sprintf("%s snapshotToken=%d", content, module.snapShotInProgress)
+		module.outDbg(space + " ---->>>>   to: " + address + "     msg: " + contentWithToken)
+		module.Pp2plink.Req <- PP2PLink.PP2PLink_Req_Message{
+			To:      address,
+			Message: contentWithToken,
+		}
+	} else {
+		module.outDbg(space + " ---->>>>   to: " + address + "     msg: " + content)
+		module.Pp2plink.Req <- PP2PLink.PP2PLink_Req_Message{
+			To:      address,
+			Message: content,
+		}
+	}
 }
+
+
 
 func before(oneId, oneTs, othId, othTs int) bool {
 	if oneTs < othTs {
@@ -355,12 +380,11 @@ func (module *DIMEX_Module) outDbg(s string) {
 	}
 }
 
+//////////////////////// snapshot Chandy-Lamport //////////////////////////
 /*
 implementacao do algoritmo de snapshot Chandy-Lamport
 https://en.wikipedia.org/wiki/Chandy%E2%80%93Lamport_algorithm
 https://www.geeksforgeeks.org/chandy-lamport-algorithm-for-distributed-snapshot/
-Others useful links:
-https://decomposition.al/blog/2019/04/26/an-example-run-of-the-chandy-lamport-snapshot-algorithm/
 
 1. processo p0 manda uma mensagem para si mesmo com "take snapshot"
 2. seja p1 o processo do qual p1 recebe a mensagem "take snapshot" pela primeira vez
@@ -372,6 +396,7 @@ O estado de x_fi é setado vazio, P_i inicia a gravacao de mensagens recebidas d
 Quando o processo p_i tiver recebido "take snapshot" em todos os canais, sua contribuição termina.
 Este termina, pois a mensagem é enviada somente uma vez em cada canal de saída.
 */
+
 func (module *DIMEX_Module) ChandyLamport() {
 	// 1. processo p0 manda uma mensagem para si mesmo com "take snapshot"
 	module.sendToLink(module.addresses[module.id], "take snapshot", "   ")
@@ -407,35 +432,113 @@ func (module *DIMEX_Module) ChandyLamport() {
 }
 
 func (module *DIMEX_Module) InitiateSnapshot() {
-	module.Snapshot[module.id] = module.RecordState() // Record local state of current process
+    // Save local state
+    module.recordState()
+
+    // Send snapshot request to all other processes
+    for _, address := range module.addresses {
+        if address != module.Pp2plink.Address {
+            module.sendToLink(address, "snapshotRequest", module.SerializeSnapshotMessage(SnapshotMessage{SenderID: module.id, SnapshotID: module.lcl}))
+        }
+    }
+}
+
+func (module *DIMEX_Module) SerializeSnapshotMessage(snapshot SnapshotMessage) string {
+	return fmt.Sprintf("snapshot:%d:%d", snapshot.SenderID, snapshot.SnapshotID)
+}
+
+func (module *DIMEX_Module) handleUponSnapshot(msgOutro PP2PLink.PP2PLink_Ind_Message) {
+	// record local state
+	module.recordState()
+	snapshot, err := module.parseSnapshotMessage(msgOutro.Message)
+	if err != nil {
+		fmt.Println("Error parsing snapshot message:", err)
+		return
+	}
+	// Record the local state if not already state 
+	if !module.stateRecorded {
+		module.recordState()
+	}
+	// Record the channel state 
+	module.recordState()
+	// Send snapshot message to all other processes
+	fmt.Println("Process ", module.id, " received snapshot message from process ", snapshot.SnapshotID)
 	for _, address := range module.addresses {
 		if address != module.Pp2plink.Address {
-			module.sendToLink(address, "marker", "") // Send marker to all other processes
+			module.sendToLink(address, "snapshotState", module.SerializeSnapshotMessage(SnapshotMessage{SenderID: snapshot.SenderID, SnapshotID: snapshot.SnapshotID}))
 		}
 	}
 }
 
-func (module *DIMEX_Module) RecordState() string {
-	// convert state to string
-	stateStr := strconv.Itoa(int(module.st))
-	lclStr := strconv.Itoa(module.lcl)
-
-	// combine state and lgical clock
-	recordedState := "State: " + stateStr + "Logical Clock: " + lclStr
-	return recordedState
+func (module *DIMEX_Module) parseSnapshotMessage(msg string) (SnapshotMessage, error) {
+    // Assuming the message is serialized in a specific format, e.g., "snapshot:senderID:snapshotID"
+    parts := strings.Split(msg, ":")
+    if len(parts) != 3 || parts[0] != "snapshot" {
+        return SnapshotMessage{}, fmt.Errorf("invalid snapshot message format")
+    }
+    senderID, err := strconv.Atoi(parts[1])
+    if err != nil {
+        return SnapshotMessage{}, fmt.Errorf("invalid senderID in snapshot message: %v", err)
+    }
+    snapshotID, err := strconv.Atoi(parts[2])
+    if err != nil {
+        return SnapshotMessage{}, fmt.Errorf("invalid snapshotID in snapshot message: %v", err)
+    }
+    return SnapshotMessage{SenderID: senderID, SnapshotID: snapshotID}, nil
 }
 
 
-func (module *DIMEX_Module) handleMarkerMessage(marker MarkerMessage) {
-    // Record local state
-    // This could be a simple log or a more complex data structure depending on your needs
-    fmt.Printf("Process %d recorded state for snapshot %d\n", module.id, marker.SnapshotID)
+func (module *DIMEX_Module) sendMarker(address string) {
+	marker := createMarkerMessage(module.id)
+	module.sendToLink(address, "marker", marker)
+}
 
-    // Send marker to all other processes
-    for _, address := range module.addresses {
-        if address != module.Pp2plink.Address {
-            module.sendToLink(address, "marker", marker)
-        }
+func createMarkerMessage(senderID int) string {
+	return fmt.Sprintf("marker:%d", senderID)
+}
+
+func (module *DIMEX_Module) handleMarkerMessage(msgOutro PP2PLink.PP2PLink_Ind_Message) {
+	senderID, err := parseMarkerMessage(msgOutro.Message)
+	if err != nil {
+		fmt.Println("Error parsing marker message:", err)
+		return
+	}
+	// Record the local state if not already state 
+	if !module.stateRecorded {
+		module.recordState()
+	}
+	// Record the channel state 
+	module.recordState()
+	// Send marker message to all other processes
+	fmt.Println("Process ", module.id, " received marker message from process ", senderID)
+	for _, address := range module.addresses {
+		if address != module.Pp2plink.Address {
+			module.sendToLink(address, "marker", createMarkerMessage(senderID))
+		}
+	}
+}
+
+func parseMarkerMessage(msg string) (int, error) {
+    parts := strings.Split(msg, ":")
+    if len(parts) != 2 || parts[0] != "marker" {
+	return 0, fmt.Errorf("invalid marker message format")
     }
+    senderID, err := strconv.Atoi(parts[1])
+    if err != nil {
+	return 0, fmt.Errorf("invalid senderID in marker message: %v", err)
+    }
+    return senderID, nil
+}
+
+// Record the local state
+func (module *DIMEX_Module) recordState() {
+	module.localState = module.st
+	for i := 0; i < len(module.waiting); i++ {
+		module.incomingState = module.st
+	}
+	// Record the local state of the process
+	module.stateRecorded = true
+
+	fmt.Println("Recorded local state:", module.localState)
 }
 
