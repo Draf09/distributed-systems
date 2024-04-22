@@ -19,7 +19,7 @@
 package DIMEX
 
 import (
-	PP2PLink "distributed-systems/SNAPSHOT/PP2PLink"
+	PP2PLink "distributed-systems/PP2PLink"
 	"fmt"
 	"strconv"
 	"strings"
