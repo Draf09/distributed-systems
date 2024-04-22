@@ -16,13 +16,13 @@
 				handleUponDeliverRespOk(msgOutro)   // recebe do nivel de baixo
 				handleUponDeliverReqEntry(msgOutro) // recebe do nivel de baixo
 */
-package DIMEX
+package SNAPSHOT
 
 import (
-	PP2PLink "distributed-systems/PP2PLink"
-	"fmt"
-	"strconv"
-	"strings"
+  PP2PLink "distributed-systems/PP2PLink"
+  "fmt"
+  "strconv"
+  "strings"
 )
 
 // ------------------------------------------------------------------------------------
