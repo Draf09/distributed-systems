@@ -26,16 +26,42 @@
 // Ou seja, o padrão correto acima é garantido pelo dimex.
 // Ainda assim, isto é apenas um teste.  E testes são frágeis em sistemas distribuídos.
 
-//useDIMEX-f.go
+// useDIMEX-f.go
 package main
 
 import (
-  "distributed-systems/DIMEX"
+	"distributed-systems/SNAPSHOT"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"time"
 )
+
+func startListener(port int) {
+	address := fmt.Sprintf("127.0.0.1:%d", port)
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error starting listener on port %d: %v\n", port, err)
+		os.Exit(1)
+	}
+	defer listener.Close()
+	fmt.Printf("Listening on port %d\n", port)
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error accepting connection: %v\n", err)
+			continue
+		}
+		go handleConnection(conn)
+	}
+}
+
+func handleConnection(conn net.Conn) {
+	defer conn.Close()
+	// Handle the connection
+}
 
 func main() {
 
@@ -51,10 +77,19 @@ func main() {
 	addresses := os.Args[2:]
 	// fmt.Print("id: ", id, "   ") fmt.Println(addresses)
 
-	var dmx *DIMEX.DIMEX_Module = DIMEX.NewDIMEX(addresses, id, true)
+	if id == 0 {
+		go startListener(5000)
+	} else if id == 1 {
+		go startListener(6001)
+	} else if id == 2 {
+		go startListener(7002)
+	}
+	time.Sleep(5 * time.Second) // Give the listener time to start
+
+	dmx := SNAPSHOT.NewDIMEX(addresses, id, true)
 	fmt.Println(dmx)
 
-	// abre arquivo que TODOS processos devem poder usar
+	// abre arquivo que TODOS processos devem/poder usar
 	file, err := os.OpenFile("./mxOUT.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		fmt.Println("Error opening file:", err)
@@ -62,13 +97,9 @@ func main() {
 	}
 	defer file.Close() // Ensure the file is closed at the end of the function
 
-	// espera para facilitar inicializacao de todos processos (a mao)
-	time.Sleep(3 * time.Second)
-
 	for {
-		// SOLICITA ACESSO AO DIMEX
 		fmt.Println("[ APP id: ", id, " PEDE   MX ]")
-		dmx.Req <- DIMEX.ENTER
+		dmx.Req <- SNAPSHOT.ENTER
 		//fmt.Println("[ APP id: ", id, " ESPERA MX ]")
 		// ESPERA LIBERACAO DO MODULO DIMEX
 		<-dmx.Ind //
@@ -79,6 +110,7 @@ func main() {
 			fmt.Println("Error writing to file:", err)
 			return
 		}
+		file.Sync() // garante que a escrita foi feita no disco
 
 		fmt.Println("[ APP id: ", id, " *EM*   MX ]")
 
@@ -88,8 +120,12 @@ func main() {
 			return
 		}
 
+		// Initiate a snapshot after accessing the critical section
+		fmt.Printf("[ APP id: %d initiated snapshot ]\n", id)
+		dmx.InitiateSnapshot()
+
 		// AGORA VAI LIBERAR O ARQUIVO PARA OUTROS
-		dmx.Req <- DIMEX.EXIT //
+		dmx.Req <- SNAPSHOT.EXIT //
 		fmt.Println("[ APP id: ", id, " FORA   MX ]")
 	}
 }

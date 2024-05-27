@@ -19,6 +19,7 @@ package PP2PLink
 import (
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"strconv"
 )
@@ -34,12 +35,12 @@ type PP2PLink_Ind_Message struct {
 }
 
 type PP2PLink struct { // estrutura do modulo
-	Ind   chan PP2PLink_Ind_Message // canal de mensagens recebidas
-	Req   chan PP2PLink_Req_Message // canal de mensagens a enviar
-	Run   bool
-	dbg   bool
-	Cache map[string]net.Conn // cache de conexoes - reaproveita conexao com destino ao inves de abrir outra
-	Address string // endereco do modulo
+	Ind     chan PP2PLink_Ind_Message // canal de mensagens recebidas
+	Req     chan PP2PLink_Req_Message // canal de mensagens a enviar
+	Run     bool
+	dbg     bool
+	Cache   map[string]net.Conn // cache de conexoes - reaproveita conexao com destino ao inves de abrir outra
+	Address string              // endereco do modulo
 }
 
 func NewPP2PLink(_address string, _dbg bool) *PP2PLink {
@@ -64,7 +65,10 @@ func (module *PP2PLink) Start(address string) {
 
 	// PROCESSO PARA RECEBIMENTO DE MENSAGENS
 	go func() {
-		listen, _ := net.Listen("tcp4", address)
+		listen, err := net.Listen("tcp4", address)
+		if err != nil {
+			log.Fatalf("Failed to listen on %s: %v", address, err)
+		}
 		for {
 			// aceita repetidamente tentativas novas de conexao
 			conn, err := listen.Accept()
